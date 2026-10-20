@@ -100,7 +100,7 @@ All contract entry points are available as typed async methods:
 
 | Method | Description |
 |---|---|
-| `create_escrow(seller, resolver, token, amount, feeBps, shippingWindow)` | Creates a new escrow, returns `bigint` ID |
+| `create_escrow(payees, buyer, resolver, token, amount, feeBps, resolverFeeBps, shippingWindow, notes)` | Creates a new escrow, returns `bigint` ID; `buyer` and `notes` may be `null` |
 | `fund_escrow(escrowId, buyer)` | Buyer funds the escrow |
 | `mark_shipped(caller, escrowId, trackingId)` | Seller marks item as shipped |
 | `confirm_delivery(caller, escrowId)` | Buyer confirms delivery, releases funds |

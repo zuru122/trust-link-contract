@@ -11,9 +11,12 @@ is defined in `contracts/escrow/src/types.rs`.
 | `Funded` | Buyer funds are locked in the contract. | No |
 | `Shipped` | Seller has marked the escrow shipped and stored a tracking id. | No |
 | `Disputed` | Buyer raised a dispute before the dispute deadline. | No |
+| `RefundRequested` | Refund path has been requested by the dispute flow. | No |
+| `PendingFinalization` | Resolver decision is awaiting the appeal window. | No |
 | `Completed` | Funds were released to the seller. | Yes |
 | `Refunded` | Funds were returned to the buyer after dispute resolution. | Yes |
 | `Canceled` | Seller canceled an unfunded escrow. | Yes |
+| `Expired` | Derived release eligibility after a configured time window; not persisted. | No |
 
 ## Diagram
 
@@ -26,13 +29,18 @@ stateDiagram-v2
 
     Funded --> Shipped: mark_shipped
     Funded --> Disputed: raise_dispute
-    Funded --> Completed: confirm_delivery or auto_release
+    Funded --> Completed: auto_release after deadline and release window
 
     Shipped --> Disputed: raise_dispute
-    Shipped --> Completed: confirm_delivery or auto_release
+    Shipped --> Completed: confirm_delivery after deadline, or auto_release after release window
 
-    Disputed --> Completed: resolve_dispute(Release)
-    Disputed --> Refunded: resolve_dispute(Refund)
+    Disputed --> PendingFinalization: resolve_dispute
+    PendingFinalization --> Disputed: appeal_dispute
+    PendingFinalization --> Completed: finalize_dispute(Release)
+    PendingFinalization --> Refunded: finalize_dispute(Refund)
+    Funded --> Expired: derived release eligibility
+    Shipped --> Expired: derived release eligibility
+    Expired --> Completed: auto_release
 
     Completed --> [*]
     Refunded --> [*]

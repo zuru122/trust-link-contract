@@ -3,6 +3,11 @@ export type ContractSymbol = string;
 export type Bytes32 = Uint8Array;
 export type Result<T> = T | null;
 
+export interface Payee {
+  address: AddressLike;
+  bps: number;
+}
+
 export enum EscrowState {
   Pending = "Pending",
   Funded = "Funded",

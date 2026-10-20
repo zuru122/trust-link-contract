@@ -2,7 +2,7 @@
 
 ## Overview
 
-TrustLink is a Soroban smart contract on the Stellar network that implements a trustless escrow system between a **buyer** and a **seller**, mediated by an optional **resolver** in case of disputes. All state lives on-chain; no off-chain service is required for core escrow operations.
+TrustLink is a Soroban smart contract on the Stellar network that implements a trustless escrow system between a **buyer** and one or more **payees**, mediated by a **resolver** in case of disputes. All state lives on-chain; no off-chain service is required for core escrow operations.
 
 ---
 
@@ -12,7 +12,7 @@ TrustLink is a Soroban smart contract on the Stellar network that implements a t
 
 | Function | Caller | Description |
 |---|---|---|
-| `create_escrow` | Seller | Creates a new escrow in `Pending` state |
+| `create_escrow` | First payee | Creates a new escrow in `Pending` state |
 | `fund_escrow` | Buyer | Locks tokens into the contract, moves escrow to `Funded` |
 | `confirm_delivery` | Buyer | Releases funds to seller on satisfied delivery |
 | `raise_dispute` | Buyer | Moves escrow to `Disputed` with a 32-byte evidence hash |
@@ -37,27 +37,46 @@ EscrowData {
 
 ### 3. State Machine (`EscrowState`)
 
+```mermaid
+stateDiagram-v2
+    [*] --> Pending: create_escrow (9 args)
+    Pending --> Funded: fund_escrow
+    Pending --> Canceled: cancel_escrow
+    Funded --> Shipped: mark_shipped
+    Funded --> Disputed: raise_dispute before dispute_deadline
+    Shipped --> Disputed: raise_dispute before dispute_deadline
+    Shipped --> Completed: confirm_delivery after dispute_deadline
+    Funded --> Completed: auto_release after dispute_deadline + shipping window
+    Shipped --> Completed: auto_release after dispute_deadline + shipping window
+    Funded --> Completed: auto_release after delivered_at + release window
+    Shipped --> Completed: auto_release after delivered_at + release window
+    Disputed --> PendingFinalization: resolve_dispute
+    PendingFinalization --> Disputed: appeal_dispute during appeal window
+    PendingFinalization --> Completed: finalize_dispute(Release)
+    PendingFinalization --> Refunded: finalize_dispute(Refund)
+    Funded --> Expired: derived release eligibility
+    Shipped --> Expired: derived release eligibility
+    Expired --> Completed: auto_release
 ```
-Pending ──fund_escrow──► Funded ──confirm_delivery──► Completed
-                           │                               ▲
-                           ├──raise_dispute──► Disputed ───┤ (release_to_seller)
-                           │                      │
-                           │                      └──────► Refunded (refund_buyer)
-                           │
-                           └──auto_release (after shipping_window)──► Completed
-```
+
+`Expired` is a derived eligibility condition, not a stored `EscrowState` in
+the current contract. It is shown to make the time-based guard visible.
 
 Valid transitions:
 
 | From | To | Trigger |
 |---|---|---|
 | `Pending` | `Funded` | `fund_escrow` |
-| `Funded` | `Completed` | `confirm_delivery` or `auto_release` |
+| `Funded` | `Completed` | `auto_release` after the dispute deadline and a release window |
+| `Shipped` | `Completed` | `confirm_delivery` after the dispute deadline, or `auto_release` after a release window |
 | `Funded` | `Disputed` | `raise_dispute` |
-| `Disputed` | `Completed` | `resolve_dispute(release_to_seller=true)` |
-| `Disputed` | `Refunded` | `resolve_dispute(release_to_seller=false)` |
+| `Shipped` | `Disputed` | `raise_dispute` |
+| `Disputed` | `PendingFinalization` | `resolve_dispute` |
+| `PendingFinalization` | `Disputed` | `appeal_dispute` during the appeal window |
+| `PendingFinalization` | `Completed` or `Refunded` | `finalize_dispute` after the appeal window |
 
-`Completed` and `Refunded` are terminal states — no further transitions are possible.
+`Completed`, `Refunded`, and `Canceled` are terminal states. `Expired` is a
+derived time condition and does not persist a separate state.
 
 ---
 
@@ -126,6 +145,12 @@ The contract never holds more than one escrow's tokens per escrow ID. Multiple c
 ## Cross-Contract Interactions
 
 TrustLink calls one external contract: the **token contract** at `EscrowData.token`. All token interactions use `soroban_sdk::token::Client`, which conforms to the SEP-41 interface. No other cross-contract calls are made.
+
+## Resolver schemes
+
+See [docs/resolvers.md](docs/resolvers.md) and
+[MULTI_RESOLVER_SCHEME.md](MULTI_RESOLVER_SCHEME.md) for single, M-of-N, and
+fallback resolver behavior, including deadline gating and deadlock risks.
 
 ---
 

@@ -4,6 +4,7 @@ import {
   type DisputeData,
   type EscrowData,
   type FeeConfig,
+  type Payee,
   type ResolutionType,
 } from "./types.js";
 
@@ -31,14 +32,20 @@ export class EscrowClient {
   }
 
   create_escrow(
-    seller: AddressLike,
+    payees: readonly Payee[],
+    buyer: AddressLike | null,
     resolver: AddressLike,
     token: AddressLike,
     amount: bigint,
     feeBps: number,
+    resolverFeeBps: number,
     shippingWindow: bigint,
+    notes: string | null = null,
   ): bigint | Promise<bigint> {
-    return this.transport.invoke("create_escrow", [seller, resolver, token, amount, feeBps, shippingWindow]);
+    const args = [payees, buyer, resolver, token, amount, feeBps, resolverFeeBps, shippingWindow];
+    return notes === null
+      ? this.transport.invoke("create_escrow", args)
+      : this.transport.invoke("create_escrow_with_notes", [...args, notes]);
   }
 
   fund_escrow(escrowId: bigint, buyer: AddressLike): void | Promise<void> {

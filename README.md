@@ -23,36 +23,36 @@ Buyers and sellers never meet. The contract handles the trust gap.
 
 ## State Machine
 
-```
-  create_escrow()
-       |
-       v
-  ┌─────────┐   fund_escrow()   ┌────────┐   mark_shipped()   ┌─────────┐
-  │ PENDING │─────────────────▶ │ FUNDED │──────────────────▶ │ SHIPPED │
-  └────┬────┘                   └────┬───┘                    └────┬────┘
-       │                             │                      ┌──────┴──────┐
-       │ cancel_escrow()        raise_dispute()      confirm_delivery() │
-       │                             │                      │    raise_dispute()
-       v                             v                      v          │
-  ┌──────────┐                 ┌──────────┐           ┌──────────┐     │
-  │CANCELLED │                 │ DISPUTED │           │COMPLETED │     │
-  └──────────┘                 └────┬─────┘           └──────────┘     │
-                                    │                                  │
-                            resolve_dispute()                    auto_release()
-                           ┌───────┴────────┐                         │
-                           v                v                         v
-                     ┌──────────┐    ┌──────────┐              ┌──────────┐
-                     │COMPLETED │    │ REFUNDED │              │COMPLETED │
-                     └──────────┘    └──────────┘              └──────────┘
+```mermaid
+stateDiagram-v2
+    [*] --> Pending: create_escrow (9 args)
+    Pending --> Funded: fund_escrow
+    Pending --> Canceled: cancel_escrow
+    Funded --> Shipped: mark_shipped
+    Funded --> Disputed: raise_dispute before dispute_deadline
+    Shipped --> Disputed: raise_dispute before dispute_deadline
+    Shipped --> Completed: confirm_delivery after dispute_deadline
+    Funded --> Completed: auto_release after dispute_deadline + shipping window
+    Shipped --> Completed: auto_release after dispute_deadline + shipping window
+    Funded --> Completed: auto_release after delivered_at + release window
+    Shipped --> Completed: auto_release after delivered_at + release window
+    Disputed --> PendingFinalization: resolve_dispute
+    PendingFinalization --> Disputed: appeal_dispute
+    PendingFinalization --> Completed: finalize_dispute(Release)
+    PendingFinalization --> Refunded: finalize_dispute(Refund)
+    Funded --> Expired: derived release eligibility
+    Shipped --> Expired: derived release eligibility
+    Expired --> Completed: auto_release
 ```
 
 Key rules:
 - **Pending**: seller cancels freely (no money moved)
 - **Funded → Shipped**: only seller can mark shipped
-- **Shipped → Completed**: buyer confirms delivery, funds release to seller
+- **Shipped → Completed**: buyer confirms after `dispute_deadline`, funds release to payees
 - **Funded or Shipped → Disputed**: buyer raises dispute
-- **Shipped → Completed (auto)**: anyone triggers after `shipped_at + shipping_window` elapses
-- **Disputed → Completed/Refunded**: only the `resolver` address decides
+- **Funded/Shipped → Completed (auto)**: anyone triggers after the dispute deadline and a configured release window elapses
+- **Disputed → PendingFinalization → Completed/Refunded**: resolver decides,
+  then finalization waits for the appeal window
 
 ---
 
@@ -60,7 +60,7 @@ Key rules:
 
 | Function | Auth | Description |
 |---|---|---|
-| `create_escrow(seller, resolver, token, amount, shipping_window)` | seller | Creates escrow, assigns sequential `u32` ID. Buyer unknown until funding. |
+| `create_escrow(payees, buyer, resolver, token, amount, fee_bps, resolver_fee_bps, shipping_window, notes)` | first payee | Creates escrow, assigns sequential `u64` ID. `buyer` and `notes` may be `null`. |
 | `fund_escrow(escrow_id, buyer)` | buyer | Transfers `amount` tokens from buyer to contract, sets `funded_at`. |
 | `mark_shipped(escrow_id)` | seller | Sets state to `Shipped`, starts delivery clock at `shipped_at`. |
 | `confirm_delivery(escrow_id)` | buyer | Transfers tokens from contract to seller, state → `Completed`. |
@@ -94,10 +94,16 @@ pub enum EscrowState {
     Shipped,
     Completed,
     Disputed,
+    RefundRequested,
     Refunded,
-    Cancelled,
+    Canceled,
+    PendingFinalization,
 }
 ```
+
+`Expired` is the derived time-eligibility condition shown in the state
+diagrams; it is not persisted as a separate enum variant in this contract.
+See the complete [error-code reference](ERROR_CODES.md).
 
 ---
 
@@ -263,8 +269,11 @@ cargo test -p trustlink-escrow
 - `Shipped`
 - `Completed`
 - `Disputed`
+- `RefundRequested`
 - `Refunded`
 - `Canceled`
+- `PendingFinalization`
+- `Expired` (derived release eligibility; not persisted)
 
 ### State transitions in practice
 
@@ -657,14 +666,14 @@ A second call panics in current implementation.
 
 ### 8.2 Escrow management
 
-#### `create_escrow(seller, resolver, token, amount, fee_bps, shipping_window)`
+#### `create_escrow(payees, buyer, resolver, token, amount, fee_bps, resolver_fee_bps, shipping_window, notes)`
 
-- **Auth:** `seller.require_auth()`.
+- **Auth:** the first payee authorizes creation.
 - **Guards:** amount > 0, fee_bps <= 300, not paused.
 - **Effects:**
   - creates new escrow record with unique id from `EscrowCounter`,
   - state = `Pending`,
-  - buyer is unset (`None`),
+  - stores the optional buyer and notes,
   - dispute deadline and funding fields set to zero defaults.
 
 #### `cancel_escrow(escrow_id)`

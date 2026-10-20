@@ -9,7 +9,12 @@ export const contractAbi = {
     { name: "withdraw_fees", inputs: ["token", "to", "amount"], output: "void" },
     {
       name: "create_escrow",
-      inputs: ["seller", "resolver", "token", "amount", "fee_bps", "shipping_window"],
+      inputs: ["payees", "buyer", "resolver", "token", "amount", "fee_bps", "resolver_fee_bps", "shipping_window", "notes"],
+      output: "u64",
+    },
+    {
+      name: "create_escrow_with_notes",
+      inputs: ["payees", "buyer", "resolver", "token", "amount", "fee_bps", "resolver_fee_bps", "shipping_window", "notes"],
       output: "u64",
     },
     { name: "fund_escrow", inputs: ["escrow_id", "buyer"], output: "void" },
